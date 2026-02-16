@@ -1,0 +1,99 @@
+version: '3'
+
+# --- THE FIX: Use 'bitnamilegacy' instead of 'bitnami' ---
+x-spark-image: &spark_image bitnamilegacy/spark:3.5.0
+
+services:
+  # ----------------------------------------
+  # 1. SPARK MASTER
+  # ----------------------------------------
+  spark-master:
+    image: *spark_image
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+
+  # ----------------------------------------
+  # 2. SPARK WORKER
+  # ----------------------------------------
+  spark-worker:
+    image: *spark_image
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    depends_on:
+      - spark-master
+
+  # ----------------------------------------
+  # 3. POSTGRES
+  # ----------------------------------------
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+
+  # ----------------------------------------
+  # 4. AIRFLOW WEBSERVER
+  # ----------------------------------------
+  airflow-webserver:
+    build: .
+    command: webserver
+    ports:
+      - "8081:8080"
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./airflow/logs:/opt/airflow/logs
+    depends_on:
+      - postgres
+
+  # ----------------------------------------
+  # 5. AIRFLOW SCHEDULER
+  # ----------------------------------------
+  airflow-scheduler:
+    build: .
+    command: scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./airflow/logs:/opt/airflow/logs
+    depends_on:
+      - postgres
+
+  # ----------------------------------------
+  # 6. JUPYTER LAB
+  # ----------------------------------------
+  jupyter:
+    image: jupyter/pyspark-notebook:latest
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./scripts:/home/jovyan/work
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+
+volumes:
+  postgres-db-volume:

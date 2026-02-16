@@ -1,0 +1,7 @@
+apache-airflow-providers-apache-spark
+pyspark==3.5.0
+dbt-postgres
+great-expectations
+pandas
+boto3
+psycopg2-binary
