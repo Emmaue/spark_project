@@ -2,64 +2,82 @@ import os
 import requests
 import boto3
 import json
-import time
+from dotenv import load_dotenv
+
+# Load the environment variables from the .env file
+load_dotenv()
 
 # --- CONFIGURATION ---
-BUCKET_NAME = "avzdax-project-datalake-emmanuel-justice" # <--- VERIFY THIS MATCHES YOUR BUCKET
-VIDEO_URL = "https://videos.pexels.com/video-files/2103099/2103099-hd_1920_1080_30fps.mp4"
-VIDEO_ID = "traffic_lagos_sample_01"
+# Safely pull the key using os.getenv
+API_KEY = os.getenv("PIXABAY_API_KEY") 
+BUCKET_NAME = os.getenv("BUCKET_NAME")
+SEARCH_QUERY = "traffic"
+BATCH_SIZE = 10 
 
-def upload_to_s3(local_file, s3_key):
-    s3 = boto3.client('s3')
+# ... [The rest of your code remains exactly the same] ... 
+
+def s3_exists(s3_client, key):
     try:
-        print(f"☁️ Uploading {local_file} to s3://{BUCKET_NAME}/{s3_key}...")
-        s3.upload_file(local_file, BUCKET_NAME, s3_key)
+        s3_client.head_object(Bucket=BUCKET_NAME, Key=key)
         return True
-    except Exception as e:
-        print(f"❌ Upload Failed: {e}")
+    except:
         return False
 
-def ingest_data():
-    # 1. Setup Local Paths
+def ingest_batch():
+    s3 = boto3.client('s3')
+    # Pixabay Video API endpoint
+    url = f"https://pixabay.com/api/videos/?key={API_KEY}&q={SEARCH_QUERY}&per_page=50"
+    
+    response = requests.get(url).json()
+    videos_found = response.get('hits', [])
+    
+    ingested_count = 0
     os.makedirs("downloads", exist_ok=True)
-    video_path = f"downloads/{VIDEO_ID}.mp4"
-    metadata_path = f"downloads/{VIDEO_ID}.json"
-
-    # 2. Download the Video (Using standard Request, no blockers)
-    print(f"⬇️ Downloading video from Pexels...")
-    start_time = time.time()
     
-    with requests.get(VIDEO_URL, stream=True) as r:
-        r.raise_for_status()
-        with open(video_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
+    for v in videos_found:
+        if ingested_count >= BATCH_SIZE:
+            break
+            
+        # Use Pixabay's ID to prevent duplicates
+        video_id = f"pixabay_{v['id']}"
+        s3_key = f"raw/videos/{video_id}.mp4"
+        
+        # 1. THE CHECK: Idempotency (Skip if already in S3)
+        if s3_exists(s3, s3_key):
+            continue
+            
+        # 2. Download (Using the 'medium' size for speed)
+        print(f"⬇️ Downloading new video: {video_id}...")
+        video_url = v['videos']['medium']['url']
+        
+        res = requests.get(video_url, stream=True)
+        local_path = f"downloads/{video_id}.mp4"
+        
+        with open(local_path, 'wb') as f:
+            for chunk in res.iter_content(chunk_size=8192):
                 f.write(chunk)
-    
-    print(f"✅ Download complete! ({time.time() - start_time:.2f}s)")
-
-    # 3. Create "Fake" Metadata (To mimic YouTube's data)
-    # We do this so your future Spark job has a JSON file to read.
-    metadata = {
-        "id": VIDEO_ID,
-        "title": "Heavy Traffic in Lagos - Lekki Phase 1",
-        "uploader": "Pexels Stock",
-        "upload_date": "20260218",
-        "view_count": 15000,
-        "duration": 45,
-        "description": "Footage of heavy traffic flow for computer vision analysis."
-    }
-    
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f)
-
-    # 4. Upload to S3
-    upload_to_s3(video_path, f"raw/videos/{VIDEO_ID}.mp4")
-    upload_to_s3(metadata_path, f"raw/metadata/{VIDEO_ID}.json")
-
-    # 5. Cleanup
-    os.remove(video_path)
-    os.remove(metadata_path)
-    print("🧹 Local files cleaned up. Pipeline Success!")
+                
+        # 3. Structured Metadata
+        metadata = {
+            "id": video_id,
+            "title": f"Traffic Analysis - {v['tags']}",
+            "duration": v['duration'],
+            "views": v['views'],
+            "ingestion_date": "2026-02-19"
+        }
+        
+        # 4. Multi-Format S3 Upload
+        s3.upload_file(local_path, BUCKET_NAME, s3_key)
+        s3.put_object(
+            Body=json.dumps(metadata), 
+            Bucket=BUCKET_NAME, 
+            Key=f"raw/metadata/{video_id}.json"
+        )
+        
+        # 5. Cleanup local storage
+        os.remove(local_path)
+        ingested_count += 1
+        print(f"✅ Batch Progress: {ingested_count}/{BATCH_SIZE}")
 
 if __name__ == "__main__":
-    ingest_data()
+    ingest_batch()
