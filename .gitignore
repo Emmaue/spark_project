@@ -6,3 +6,4 @@ venv/
 target/
 logs/
 de-project-key.pem
+venv/
