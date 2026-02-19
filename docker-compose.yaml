@@ -16,7 +16,7 @@ services:
       - SPARK_RPC_ENCRYPTION_ENABLED=no
     ports:
       - "8080:8080"
-      - "7077:7077"
+      - "4040:4040"
 
   # ----------------------------------------
   # 2. SPARK WORKER
