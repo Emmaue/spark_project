@@ -25,12 +25,28 @@ def s3_exists(s3_client, key):
 
 def ingest_batch():
     s3 = boto3.client('s3')
-    # Pixabay Video API endpoint
+    
+    # 1. Check if the API key actually loaded into Airflow
+    if not API_KEY:
+        raise ValueError("🚨 CRITICAL ERROR: PIXABAY_API_KEY is missing! Airflow cannot see the .env file.")
+
     url = f"https://pixabay.com/api/videos/?key={API_KEY}&q={SEARCH_QUERY}&per_page=50"
     
-    response = requests.get(url).json()
+    # 2. Make the request
+    print(f"📡 Reaching out to Pixabay API...")
+    raw_response = requests.get(url)
+
+    # 3. Check for errors BEFORE parsing JSON
+    if raw_response.status_code != 200:
+        print(f"❌ API Request Failed with Status Code: {raw_response.status_code}")
+        print(f"❌ Error Message: {raw_response.text}")
+        raw_response.raise_for_status() # Force the script to fail cleanly
+
+    # 4. Safely parse JSON
+    response = raw_response.json()
     videos_found = response.get('hits', [])
     
+    # ... [Keep the rest of your loop exactly the same starting from here] ...
     ingested_count = 0
     os.makedirs("downloads", exist_ok=True)
     
