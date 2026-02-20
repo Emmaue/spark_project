@@ -1,6 +1,9 @@
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
+import boto3
+from airflow.operators.python import PythonOperator
+from airflow.utils.trigger_rule import TriggerRule
 
 # 1. Define the default settings for the pipeline
 default_args = {
@@ -11,6 +14,19 @@ default_args = {
     'retries': 1,
     'retry_delay': timedelta(minutes=2),
 }
+
+
+def shutdown_ec2_server():
+    print("🛑 Pipeline finished (Success or Failure). Shutting down EC2 instance to save costs...")
+    
+    instance_id = 'i-0ed960e2e25ff0b4d' 
+    region = 'us-east-1'
+    
+    ec2 = boto3.client('ec2', region_name=region)
+    # This command gracefully stops the EBS-backed instance
+    ec2.stop_instances(InstanceIds=[instance_id])
+    
+    print("✅ Shutdown command successfully sent!")
 
 # 2. Instantiate the DAG
 with DAG(
@@ -42,5 +58,20 @@ with DAG(
         bash_command='python /opt/airflow/scripts/spark_transformation.py',
     )
 
+    # Task 4: Data Quality Gatekeeper
+    quality_gatekeeper = BashOperator(
+        task_id='data_quality_gatekeeper',
+        bash_command='python /opt/airflow/scripts/data_quality_gatekeeper.py',
+    )
+
+    # Task 5: The Smart Shutdown
+    shutdown_server = PythonOperator(
+        task_id='shutdown_ec2_server',
+        python_callable=shutdown_ec2_server,
+        trigger_rule=TriggerRule.ALL_DONE, # This guarantees it runs even if the pipeline crashes!
+    )
+
+    
+
     # 3. Define the Pipeline Execution Order
-    ingest_raw_data >> extract_cv_features >> transform_gold_data
+    ingest_raw_data >> extract_cv_features >> transform_gold_data >> quality_gatekeeper >> shutdown_server
